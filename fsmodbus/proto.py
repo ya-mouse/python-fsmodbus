@@ -89,7 +89,7 @@ class ModbusLayer():
     def on_data(self, bufidx, response, tm):
         print(bufidx, response)
 
-class ModbusTCPClient(ModbusLayer, TcpTransport):
+class ModbusTcpClient(ModbusLayer, TcpTransport):
     def __init__(self, host, interval, slave, func, regs):
         ModbusLayer.__init__(self, False, slave, func, regs)
         TcpTransport.__init__(self, host, interval,
@@ -98,7 +98,7 @@ class ModbusTCPClient(ModbusLayer, TcpTransport):
     def on_data(self, bufidx, response, tm):
         super().on_data(bufidx, response, tm)
 
-class ModbusRTUClient(ModbusLayer, SerialTransport):
+class ModbusRtuClient(ModbusLayer, SerialTransport):
     def __init__(self, host, interval, slave, func, serial, regs):
         ModbusLayer.__init__(self, True, slave, func, regs)
         SerialTransport.__init__(self, host, interval, serial)
@@ -132,7 +132,7 @@ if __name__ == '__main__':
         'total': 4,                    # total registers' number
         } ]
     }
-    c = ModbusTCPClient(**cfg)
+    c = ModbusTcpClient(**cfg)
     fsm = async.FSMSock()
     fsm.connect(c)
     while fsm.run():
