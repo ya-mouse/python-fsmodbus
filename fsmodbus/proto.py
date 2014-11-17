@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import socket
+import logging
 from time import time,sleep
 from struct import pack, unpack
 
@@ -66,11 +67,11 @@ class ModbusLayer():
                         v = unpack('!%iB' % ((len(resp) - sz - 1)/2), resp[sz:])
                     else:
                         v = unpack('!%iH' % ((len(resp) - sz)/2), resp[sz:])
-#                    self._l.debug("%s %s %d" % (self._host, tid, v))
+#                    logging.debug("%s %s %d" % (self._host, tid, v))
                     if self._RTU:
                         v.pop() # remove CRC value
                 except Exception as e:
-                    self._l.critical("E: %s %s (%s: %d)" % (self._host, resp, e, (len(resp)-sz)/2))
+                    logging.critical("E: %s %s (%s: %d)" % (self._host, resp, e, (len(resp)-sz)/2))
                     return 0
                 if func not in (2, 3, 4):
                     return 0
