@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import socket
+import select
 import logging
 from time import time,sleep
 from struct import pack, unpack
@@ -16,7 +17,6 @@ class ModbusLayer():
         self._regs = regs
 
     def _build_buf(self):
-        print(self, '_build_buf')
         if self._func in (2,3,4): # read_holding_registers
             self._bufidx = 0
             self._ptridx = 0
@@ -85,7 +85,7 @@ class ModbusLayer():
             if self._bufidx == 0:
                 self.stop()
                 return 0
-        return -1
+        return select.EPOLLOUT
 
     def on_data(self, bufidx, response, tm):
         print(bufidx, response)
