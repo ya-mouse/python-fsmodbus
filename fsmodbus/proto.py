@@ -26,6 +26,7 @@ class ModbusLayer():
                 cnt = p['total']
                 self._buf.append([])
                 func = p.get('func', self._func)
+                slave = p.get('slave', self._slave)
                 offset = p.get('offset', 0)
                 while cnt > 0:
                     buf = b''
@@ -33,7 +34,7 @@ class ModbusLayer():
                         buf = pack('!3H', self._tid, 0x00, 0x6)
                         self._tid = (self._tid + 1) & 0xffff
                     self._buf[self._bufidx].append(buf + pack('!2B2H',
-                                                     self._slave, func, offset + p['total'] - cnt,
+                                                     slave, func, offset + p['total'] - cnt,
                                                      min(cnt, p['read'])))
                     cnt -= p['read']
                 # Create empty array for responses
