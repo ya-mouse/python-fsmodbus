@@ -59,11 +59,11 @@ class ModbusLayer():
             for resp in self._res[idx]:
                 try:
                     if self._RTU:
-                        slave, func, code = unpack('!3B', resp[0:3])
                         sz = 3
+                        slave, func, code = unpack('!3B', resp[0:3])
                     else:
-                        tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
                         sz = 9
+                        tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
                     if func == 2:
                         v = unpack('!%iB' % ((len(resp) - sz - 1)/2), resp[sz:])
                     else:
