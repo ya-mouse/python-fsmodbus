@@ -211,7 +211,7 @@ class ModbusBatchLayer():
 
 class ModbusTcpClient(ModbusTcpLayer, TcpTransport):
     def __init__(self, host, interval, slave, func, regs):
-        ModbusTcpLayer.__init__(self, slave, func, regs)
+        ModbusLayer.__init__(self, False, slave, func, regs)
         TcpTransport.__init__(self, host, interval,
                               (socket.AF_INET, socket.SOCK_STREAM, 502))
 
