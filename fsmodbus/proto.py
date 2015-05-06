@@ -209,7 +209,7 @@ class ModbusBatchLayer():
     def on_data(self, points, response, tm):
         print(points, response)
 
-class ModbusTcpClient(ModbusTcpLayer, TcpTransport):
+class ModbusTcpClient(ModbusLayer, TcpTransport):
     def __init__(self, host, interval, slave, func, regs):
         ModbusLayer.__init__(self, False, slave, func, regs)
         TcpTransport.__init__(self, host, interval,
