@@ -158,7 +158,8 @@ class ModbusBatchLayer():
                     self._buf += pack('!3H2B2H', self._tid, 0x00, 0x6,
                                       slave, func, offset + startreg,
                                       toread)
-                    self._res[self._tid] = points[startreg:toread]
+                    self._res[self._tid] = [(k-startreg, v) for k,v in points[startreg:startreg+toread]]
+#                    logging.debug('{},{}: {} ({},{})'.format(self._host, self._tid, self._res[self._tid], startreg, startreg+toread))
                     self._tid = (self._tid + 1) & 0xffff
                     cnt -= p['read']
                 regnum += 1
