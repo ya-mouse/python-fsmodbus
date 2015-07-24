@@ -57,7 +57,7 @@ class ModbusLayer():
         self._regs = regs
 
     def _build_buf(self):
-        if self._func in (2,3,4): # read_holding_registers
+        if self._func in (1,2,3,4): # read_holding_registers
             self._bufidx = 0
             self._ptridx = 0
             self._buf = []
@@ -107,7 +107,9 @@ class ModbusLayer():
                     else:
                         sz = 9
                         tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
-                    if func == 2:
+                    if func == 1:
+                        v = resp[sz:]
+                    elif func == 2:
                         v = unpack('!%iB' % ((len(resp) - sz - 1)/2), resp[sz:])
                     else:
                         v = unpack('!%iH' % ((len(resp) - sz)/2), resp[sz:])
@@ -117,7 +119,7 @@ class ModbusLayer():
                 except Exception as e:
                     logging.critical("E: %s %s (%s: %d)" % (self._host, resp, e, (len(resp)-sz)/2))
                     return 0
-                if func not in (2, 3, 4):
+                if func not in (1, 2, 3, 4):
                     return 0
                 r += v
             tm = self._expire - self._interval
@@ -143,7 +145,7 @@ class ModbusBatchLayer():
 
     def _build_buf(self):
         self._res = {}
-        if self._func in (2,3,4):
+        if self._func in (1,2,3,4):
             self._buf = b''
             regnum = 0
             for p in self._regs:
@@ -181,11 +183,13 @@ class ModbusBatchLayer():
             try:
                 tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
                 size -= 3
-                if func == 2:
+                if func == 1:
+                    v = resp[9:]
+                elif func == 2:
                     v = unpack('!%iB' % (size), resp[9:9+size])
                 else:
                     v = unpack('!%iH' % (size >> 1), resp[9:9+size])
-                if func not in (2, 3, 4):
+                if func not in (1, 2, 3, 4):
                     logging.critical('{}: UNK FUNC {}'.format(self._host, func))
                     return 0
             except Exception as e:
