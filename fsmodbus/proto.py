@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import sys
 import socket
 import select
 import logging
@@ -101,26 +102,38 @@ class ModbusLayer():
             r = []
             for resp in self._res[idx]:
                 try:
+                    v = (None,)
                     if self._RTU:
                         sz = 3
                         slave, func, code = unpack('!3B', resp[0:3])
                     else:
                         sz = 9
                         tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
+
+                    if magic != 0:
+                        raise Exception('Wrong Modbus magic: {:#x}'.format(magic))
+
+                    if (code & 0x80) == 0x80:
+                        raise Exception('ERR CODE {:#x}'.format(code, code))
+
                     if func == 1:
-                        v = resp[sz:]
+                        v = unpack('!%iB' % size, resp[sz:sz+size])
                     elif func == 2:
+#                        v = unpack('!%iB' % size, resp[sz:sz+size])
                         v = unpack('!%iB' % ((len(resp) - sz - 1)/2), resp[sz:])
-                    else:
+                    elif func == 3 or func == 4:
+#                        v = unpack('!%iH' % (size >> 1), resp[sz:sz+size])
                         v = unpack('!%iH' % ((len(resp) - sz)/2), resp[sz:])
+                    else:
+                        logging.critical('{}: UNK FUNC {:#x}'.format(self._host, func))
+
 #                    logging.debug("%s %s %d" % (self._host, tid, v))
                     if self._RTU:
                         v.pop() # remove CRC value
                 except Exception as e:
-                    logging.critical("E: %s %s (%s: %d)" % (self._host, resp, e, (len(resp)-sz)/2))
-                    return 0
-                if func not in (1, 2, 3, 4):
-                    return 0
+                    v = (None,)
+                    logging.critical("E: %s %s (%s: %d fn=%d len=%d sz=%d)" % (self._host, resp, e, (len(resp)-sz)/2, func, size, sz))
+#                    return select.EPOLLOUT
                 r += v
             tm = self._expire - self._interval
             self.on_data(idx, r, tm)
@@ -137,29 +150,39 @@ class ModbusLayer():
         print(bufidx, response)
 
 class ModbusBatchLayer():
-    def __init__(self, slave, func, regs):
+    def __init__(self, slave, func, regs, interval, oneshot=False):
         self._tid = 1
+        self._interval = interval
+        self._mininterval = interval
         self._slave = slave
         self._func = func
         self._regs = regs
+        self._oneshot = oneshot
 
     def _build_buf(self):
         self._res = {}
         if self._func in (1,2,3,4):
-            self._buf = b''
+            self._buf = {}
             regnum = 0
             for p in self._regs:
                 cnt = p['total']
                 func = p.get('func', self._func)
                 slave = p.get('slave', self._slave)
                 offset = p.get('offset', 0)
+                interval = p.get('interval', self._interval)
+                self._mininterval = min(self._mininterval, interval)
                 points = [(k, v) for (k, v) in sorted(p['points'].items())]
                 while cnt > 0:
                     toread = min(cnt, p['read'])
                     startreg = p['total'] - cnt
-                    self._buf += pack('!3H2B2H', self._tid, 0x00, 0x6,
-                                      slave, func, offset + startreg,
-                                      toread)
+                    self._buf[self._tid] = [
+                        pack('!3H2B2H', self._tid, 0x00, 0x6,
+                             slave, func, offset + startreg,
+                             toread),
+                        interval, # interval
+                        0.0, # next query time
+                        0,   # retries
+                    ]
                     self._res[self._tid] = [(k-startreg, v) for k,v in points[startreg:startreg+toread]]
 #                    logging.debug('{},{}: {} ({},{})'.format(self._host, self._tid, self._res[self._tid], startreg, startreg+toread))
                     self._tid = (self._tid + 1) & 0xffff
@@ -169,47 +192,90 @@ class ModbusBatchLayer():
     def send_buf(self):
         if not len(self._buf):
             return 0
-        self._toread = self._tid - 1
-        self._response = []
-        return self._write(self._buf)
+        now = time()
+        exp = now + self._mininterval
+        to  = exp
+        rc = 0
+        logging.debug('SEND {} @ {}'.format(self._mininterval, now))
+        for tid, d in self._buf.items():
+            if d[2] <= now:
+                d[3] += 1
+                rc += self._write(d[0])
+                # Queue next poll interval
+                d[2] = now + d[1]
+                if len(d[0]) > 6:
+                    logging.debug('{:#x} sid={} @ {} [{}]'.format(unpack('!H', d[0][:2])[0], d[0][6], d[2], d[0]))
+            exp = min(exp, d[2])
+            to  = max(to, exp)
+        if rc > 0:
+            self._retries = 0
+            self._expire = exp
+            self._timeout = to + 15.0
+            logging.debug('sent: {} exp={} timeout={}'.format(rc, exp, to+15.0))
+        return rc
 
     def process_data(self, data, tm = None):
         # Process data
         self._state = self.READY
         resp = data
+        if tm is None:
+            tm = time()
+        logging.debug('{}: data=[{}]'.format(self._host, data))
         while len(resp):
             v = None
-            tid = size = 0
+            tid = size = func = code = 0
             try:
+                if len(resp) < 9:
+                    raise Exception('Too short packet')
+
                 tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
                 size -= 3
-                if func == 1:
-                    v = resp[9:]
-                elif func == 2:
-                    v = unpack('!%iB' % (size), resp[9:9+size])
-                else:
-                    v = unpack('!%iH' % (size >> 1), resp[9:9+size])
-                if func not in (1, 2, 3, 4):
-                    logging.critical('{}: UNK FUNC {}'.format(self._host, func))
-                    return 0
-            except Exception as e:
-                logging.critical("E: %s %s (%s: %d)" % (self._host, len(resp[9:]), e, size))
-                # immediate stop of data processing
-                break
-            resp = resp[9+size:]
-            if not v is None:
-                self._response.append((tid, v))
-            self._toread -= 1
+                if magic != 0:
+                    raise Exception('Wrong Modbus magic: {:#x}'.format(magic))
 
-        if not self._toread:
-            tm = self._expire - self._interval
-            for tid, v in self._response:
-                self.on_data(self._res[tid], v, tm)
-            self._response = []
-            self.stop()
-            return 0
+                if (code & 0x80) == 0x80:
+                    self._buf[tid][2] = tm + min(120.0, self._buf[tid][3]*3.0) # sleep for N*3 iterations
+                    raise Exception('ERR CODE {:#x} [{}] {} int={} {}'.format(code, resp, tid, self._buf[tid][2], len(self._buf)))
+
+                if func == 1:
+                    v = unpack('!%iB' % size, resp[9:9+size])
+                elif func == 2:
+                    v = unpack('!%iB' % size, resp[9:9+size])
+                elif func == 3 or func == 4:
+                    v = unpack('!%iH' % (size >> 1), resp[9:9+size])
+                else:
+                    logging.critical('{}: UNK FUNC {:#x}'.format(self._host, func))
+            except Exception as e:
+                logging.critical("E: {}({}) {} ({}: {}) [{}]".format(self._host, self.fileno(), len(resp[9:]), e, size, resp))
+                # immediate stop of data processing
+                #break
+            resp = resp[9+size:]
+            logging.debug('{}: --> [{}] tid={} tm={}({}) func={} code={:#x} sz={} v={}  {}'.format(self._host, resp, tid, self._buf[tid][2], tm, func, code, size, v, len(self._buf)))
+            if not v is None:
+                try:
+                    if not self._oneshot:
+                        self._buf[tid][2] = tm + self._buf[tid][1]
+                    # Reset error counters
+                    self._buf[tid][3] = 0
+                    # Post data
+                    self.on_data(self._res[tid], v, tm)
+                except ValueError as e:
+                    logging.debug('ERROR {}: {} ({}, {})'.format(self._host, e, tid, v))
+#            else:
+#                for rn,data in self._res.get(tid, {}):
+#                    logging.debug('{}=None'.format(data[3]))
+
+#            self.stop()
+#            return 0
+
         self._state = self.WAIT_ANSWER
-        return -1 # select.EPOLLIN
+        return select.EPOLLIN
+
+    def on_disconnect(self):
+#        import traceback
+#        logging.critical('====== DISCONNECT ======== exp={} timeout={} now={}'.format(self._expire, self._timeout, time()))
+#        logging.critical(traceback.format_stack())
+        super().on_disconnect()
 
     def on_data(self, points, response, tm):
         print(points, response)
@@ -225,7 +291,7 @@ class ModbusTcpClient(ModbusLayer, TcpTransport):
 
 class ModbusBatchClient(ModbusBatchLayer, TcpTransport):
     def __init__(self, host, interval, slave, func, regs):
-        ModbusBatchLayer.__init__(self, slave, func, regs)
+        ModbusBatchLayer.__init__(self, slave, func, regs, interval)
         TcpTransport.__init__(self, host, interval,
                               (socket.AF_INET, socket.SOCK_STREAM, 502))
 
