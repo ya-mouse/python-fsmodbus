@@ -163,12 +163,12 @@ class ModbusBatchLayer():
         self._res = {}
         if self._func in (1,2,3,4):
             self._buf = {}
-            regnum = 0
             for p in self._regs:
                 cnt = p['total']
                 func = p.get('func', self._func)
                 slave = p.get('slave', self._slave)
                 offset = p.get('offset', 0)
+                ptstart = 0
                 interval = p.get('interval', self._interval)
                 self._mininterval = min(self._mininterval, interval)
                 points = [(k, v) for (k, v) in sorted(p['points'].items())]
@@ -183,11 +183,15 @@ class ModbusBatchLayer():
                         0.0, # next query time
                         0,   # retries
                     ]
-                    self._res[self._tid] = [(k-startreg, v) for k,v in points[startreg:startreg+toread]]
+                    self._res[self._tid] = []
+                    for ptk, ptv in points[ptstart:]:
+                        if ptk >= startreg + toread:
+                            break
+                        self._res[self._tid].append((ptk-startreg, ptv))
+                    ptstart += len(self._res[self._tid])
 #                    logging.debug('{},{}: {} ({},{})'.format(self._host, self._tid, self._res[self._tid], startreg, startreg+toread))
                     self._tid = (self._tid + 1) & 0xffff
                     cnt -= p['read']
-                regnum += 1
 
     def send_buf(self):
         if not len(self._buf):
