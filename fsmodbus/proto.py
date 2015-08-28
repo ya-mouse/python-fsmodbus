@@ -49,108 +49,7 @@ def crc16(st, crc=0xffff):
     return crc
 
 class ModbusLayer():
-    def __init__(self, RTU, slave, func, regs):
-        self._RTU = RTU
-        if not self._RTU:
-            self._tid = 1
-        self._slave = slave
-        self._func = func
-        self._regs = regs
-
-    def _build_buf(self):
-        if self._func in (1,2,3,4): # read_holding_registers
-            self._bufidx = 0
-            self._ptridx = 0
-            self._buf = []
-            self._res = []
-            for p in self._regs:
-                cnt = p['total']
-                self._buf.append([])
-                func = p.get('func', self._func)
-                slave = p.get('slave', self._slave)
-                offset = p.get('offset', 0)
-                while cnt > 0:
-                    buf = b''
-                    if not self._RTU:
-                        buf = pack('!3H', self._tid, 0x00, 0x6)
-                        self._tid = (self._tid + 1) & 0xffff
-                    buf += pack('!2B2H',
-                                 slave, func, offset + p['total'] - cnt,
-                                 min(cnt, p['read']))
-                    if self._RTU:
-                        buf += pack('<H', crc16(buf))
-                    self._buf[self._bufidx].append(buf)
-                    cnt -= p['read']
-                # Create empty array for responses
-                self._res.append([None] * len(self._buf[self._bufidx]))
-                self._bufidx += 1
-            self._bufidx = 0
-
-    def send_buf(self):
-        if not len(self._buf):
-            return 0
-        return self._write(self._buf[self._bufidx][self._ptridx])
-
-    def process_data(self, data, tm = None):
-        # Process data
-        self._res[self._bufidx][self._ptridx] = data
-        self._ptridx = (self._ptridx + 1) % len(self._buf[self._bufidx])
-        self._state = self.READY
-        if self._ptridx == 0:
-            idx = self._bufidx
-            self._bufidx = (self._bufidx + 1) % len(self._buf)
-            r = []
-            for resp in self._res[idx]:
-                try:
-                    v = (None,)
-                    if self._RTU:
-                        sz = 3
-                        slave, func, code = unpack('!3B', resp[0:3])
-                    else:
-                        sz = 9
-                        tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
-
-                    if magic != 0:
-                        raise Exception('Wrong Modbus magic: {:#x}'.format(magic))
-
-                    if (code & 0x80) == 0x80:
-                        raise Exception('ERR CODE {:#x}'.format(code, code))
-
-                    if func == 1:
-                        v = unpack('!%iB' % size, resp[sz:sz+size])
-                    elif func == 2:
-#                        v = unpack('!%iB' % size, resp[sz:sz+size])
-                        v = unpack('!%iB' % ((len(resp) - sz - 1)/2), resp[sz:])
-                    elif func == 3 or func == 4:
-#                        v = unpack('!%iH' % (size >> 1), resp[sz:sz+size])
-                        v = unpack('!%iH' % ((len(resp) - sz)/2), resp[sz:])
-                    else:
-                        logging.critical('{}: UNK FUNC {:#x}'.format(self._host, func))
-
-#                    logging.debug("%s %s %d" % (self._host, tid, v))
-                    if self._RTU:
-                        v.pop() # remove CRC value
-                except Exception as e:
-                    v = (None,)
-                    logging.critical("E: %s %s (%s: %d fn=%d len=%d sz=%d)" % (self._host, resp, e, (len(resp)-sz)/2, func, size, sz))
-#                    return select.EPOLLOUT
-                r += v
-            tm = self._expire - self._interval
-            self.on_data(idx, r, tm)
-#            for k, d in self._regs[idx]['points'].items():
-#                v = get_value(r, d[0], d[1]) / d[2]
-
-#            print(self._host, int(self._expire), r)
-            if self._bufidx == 0:
-                self.stop()
-                return 0
-        return select.EPOLLOUT
-
-    def on_data(self, bufidx, response, tm):
-        print(bufidx, response)
-
-class ModbusBatchLayer():
-    def __init__(self, slave, func, regs, interval, oneshot=False):
+    def __init__(self, slave, func, regs, interval, rps=None, oneshot=False):
         self._tid = 1
         self._interval = interval
         self._mininterval = interval
@@ -158,6 +57,8 @@ class ModbusBatchLayer():
         self._func = func
         self._regs = regs
         self._oneshot = oneshot
+        self._rps = rps
+        self._bufidx = self._tid
 
     def _build_buf(self):
         self._res = {}
@@ -200,22 +101,33 @@ class ModbusBatchLayer():
         exp = now + self._mininterval
         to  = exp
         rc = 0
-        logging.debug('SEND {} @ {}'.format(self._mininterval, now))
+#        logging.debug('SEND {} @ {}'.format(self._mininterval, now))
+
+        if not self._rps is None:
+            last = min(self._bufidx + self._rps, len(self._buf) + 1)
+            for tid in range(self._bufidx, last):
+                rc += self._write(self._buf[tid][0])
+            if last == len(self._buf) + 1:
+                self._bufidx = 1
+            else:
+                self._bufidx = last
+            return rc
+
         for tid, d in self._buf.items():
             if d[2] <= now:
                 d[3] += 1
                 rc += self._write(d[0])
                 # Queue next poll interval
                 d[2] = now + d[1]
-                if len(d[0]) > 6:
-                    logging.debug('{:#x} sid={} @ {} [{}]'.format(unpack('!H', d[0][:2])[0], d[0][6], d[2], d[0]))
+#                if len(d[0]) > 6:
+#                    logging.debug('{:#x} sid={} @ {} [{}]'.format(unpack('!H', d[0][:2])[0], d[0][6], d[2], d[0]))
             exp = min(exp, d[2])
             to  = max(to, exp)
         if rc > 0:
             self._retries = 0
             self._expire = exp
             self._timeout = to + 15.0
-            logging.debug('sent: {} exp={} timeout={}'.format(rc, exp, to+15.0))
+#            logging.debug('sent: {} exp={} timeout={}'.format(rc, exp, to+15.0))
         return rc
 
     def process_data(self, data, tm = None):
@@ -224,7 +136,7 @@ class ModbusBatchLayer():
         resp = data
         if tm is None:
             tm = time()
-        logging.debug('{}: data=[{}]'.format(self._host, data))
+#        logging.debug('{}: data=[{}]'.format(self._host, data))
         while len(resp):
             v = None
             tid = size = func = code = 0
@@ -237,9 +149,9 @@ class ModbusBatchLayer():
                 if magic != 0:
                     raise Exception('Wrong Modbus magic: {:#x}'.format(magic))
 
-                if (code & 0x80) == 0x80:
+                if (code & 0x80) == 0x80 or (func & 0x80) == 0x80:
                     self._buf[tid][2] = tm + min(120.0, self._buf[tid][3]*3.0) # sleep for N*3 iterations
-                    raise Exception('ERR CODE {:#x} [{}] {} int={} {}'.format(code, resp, tid, self._buf[tid][2], len(self._buf)))
+                    raise Exception('ERR CODE/FUNC {:#x}/{:#x} [{}] {} int={} {}'.format(code, func, resp, tid, self._buf[tid][2], len(self._buf)))
 
                 if func == 1:
                     v = unpack('!%iB' % size, resp[9:9+size])
@@ -254,7 +166,7 @@ class ModbusBatchLayer():
                 # immediate stop of data processing
                 #break
             resp = resp[9+size:]
-            logging.debug('{}: --> [{}] tid={} tm={}({}) func={} code={:#x} sz={} v={}  {}'.format(self._host, resp, tid, self._buf[tid][2], tm, func, code, size, v, len(self._buf)))
+#            logging.debug('{}: --> [{}] tid={} tm={}({}) func={} code={:#x} sz={} v={}  {}'.format(self._host, resp, tid, self._buf[tid][2], tm, func, code, size, v, len(self._buf)))
             if not v is None:
                 try:
                     if not self._oneshot:
@@ -272,8 +184,14 @@ class ModbusBatchLayer():
 #            self.stop()
 #            return 0
 
-        self._state = self.WAIT_ANSWER
-        return select.EPOLLIN
+        if self._rps is None:
+            self._state = self.WAIT_ANSWER
+            return select.EPOLLIN
+        else:
+            if self._bufidx == 1:
+                self.stop()
+                return 0
+            return select.EPOLLOUT
 
     def on_disconnect(self):
 #        import traceback
@@ -285,17 +203,8 @@ class ModbusBatchLayer():
         print(points, response)
 
 class ModbusTcpClient(ModbusLayer, TcpTransport):
-    def __init__(self, host, interval, slave, func, regs):
-        ModbusLayer.__init__(self, False, slave, func, regs)
-        TcpTransport.__init__(self, host, interval,
-                              (socket.AF_INET, socket.SOCK_STREAM, 502))
-
-    def on_data(self, points, response, tm):
-        super().on_data(points, response, tm)
-
-class ModbusBatchClient(ModbusBatchLayer, TcpTransport):
-    def __init__(self, host, interval, slave, func, regs):
-        ModbusBatchLayer.__init__(self, slave, func, regs, interval)
+    def __init__(self, host, interval, slave, func, regs, rps=None):
+        ModbusLayer.__init__(self, slave, func, regs, interval, rps=rps)
         TcpTransport.__init__(self, host, interval,
                               (socket.AF_INET, socket.SOCK_STREAM, 502))
 
@@ -303,16 +212,16 @@ class ModbusBatchClient(ModbusBatchLayer, TcpTransport):
         super().on_data(bufidx, response, tm)
 
 class ModbusRtuClient(ModbusLayer, SerialTransport):
-    def __init__(self, host, interval, slave, func, serial, regs):
-        ModbusLayer.__init__(self, True, slave, func, regs)
+    def __init__(self, host, interval, slave, func, serial, regs, rps=None):
+        ModbusLayer.__init__(self, True, slave, func, regs, interval, rps=rps)
         SerialTransport.__init__(self, host, interval, serial)
 
     def on_data(self, bufidx, response, tm):
         super().on_data(bufidx, response, tm)
 
 class ModbusRealcomClient(ModbusLayer, RealcomClient):
-    def __init__(self, host, interval, slave, func, serial, realcom_port, regs):
-        ModbusLayer.__init__(self, True, slave, func, regs)
+    def __init__(self, host, interval, slave, func, serial, realcom_port, regs, rps=None):
+        ModbusLayer.__init__(self, True, slave, func, regs, interval, rps=rps)
         RealcomClient.__init__(self, host, interval, realcom_port, serial)
 
     def send_buf(self):
