@@ -160,9 +160,9 @@ class ModbusLayer():
                 elif func == 3 or func == 4:
                     v = unpack('!%iH' % (size >> 1), resp[9:9+size])
                 else:
-                    logging.critical('{}: UNK FUNC {:#x}'.format(self._host, func))
+                    logging.debug('{}: UNK FUNC {:#x}'.format(self._host, func))
             except Exception as e:
-                logging.critical("E: {}({}) {} ({}: {}) [{}]".format(self._host, self.fileno(), len(resp[9:]), e, size, resp))
+                logging.debug("E: {}({}) {} ({}: {}) [{}]".format(self._host, self.fileno(), len(resp[9:]), e, size, resp))
                 # immediate stop of data processing
                 #break
             resp = resp[9+size:]
