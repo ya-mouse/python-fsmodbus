@@ -203,7 +203,7 @@ class ModbusLayer():
         print(points, response)
 
 class ModbusTcpClient(ModbusLayer, TcpTransport):
-    def __init__(self, host, interval, slave, func, regs, port, rps=None):
+    def __init__(self, host, interval, slave, func, regs, port=502, rps=None):
         ModbusLayer.__init__(self, slave, func, regs, interval, rps=rps)
         TcpTransport.__init__(self, host, interval,
                               (socket.AF_INET, socket.SOCK_STREAM, port))
