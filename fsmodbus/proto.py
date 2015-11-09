@@ -107,8 +107,8 @@ class ModbusLayer():
             last = min(self._bufidx + self._rps, len(self._buf) + 1)
             for tid in range(self._bufidx, last):
                 if self._bufidx == 1:
-                    self._expFirst = exp
-                self._expire = self._expFirst
+                    self._exp_first = exp
+                self._expire = self._exp_first
                 rc += self._write(self._buf[tid][0])
             if last == len(self._buf) + 1:
                 self._bufidx = 1
