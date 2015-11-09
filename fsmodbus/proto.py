@@ -91,8 +91,8 @@ class ModbusLayer():
                         self._res[self._tid].append((ptk-startreg, ptv))
                     ptstart += len(self._res[self._tid])
 #                    logging.debug('{},{}: {} ({},{})'.format(self._host, self._tid, self._res[self._tid], startreg, startreg+toread))
-                    self._tid = (self._tid + 1) & 0xffff
                     cnt -= p['read']
+                self._tid = (self._tid + 1) & 0xffff
 
     def send_buf(self):
         if not len(self._buf):
@@ -106,26 +106,29 @@ class ModbusLayer():
         if not self._rps is None:
             last = min(self._bufidx + self._rps, len(self._buf) + 1)
             for tid in range(self._bufidx, last):
+                if self._bufidx == 1:
+                    self._expFirst = exp
+                self._expire = self._expFirst
                 rc += self._write(self._buf[tid][0])
             if last == len(self._buf) + 1:
                 self._bufidx = 1
             else:
                 self._bufidx = last
-            return rc
-
-        for tid, d in self._buf.items():
-            if d[2] <= now:
-                d[3] += 1
-                rc += self._write(d[0])
-                # Queue next poll interval
-                d[2] = now + d[1]
-#                if len(d[0]) > 6:
-#                    logging.debug('{:#x} sid={} @ {} [{}]'.format(unpack('!H', d[0][:2])[0], d[0][6], d[2], d[0]))
-            exp = min(exp, d[2])
-            to  = max(to, exp)
+        else:
+            for tid, d in self._buf.items():
+                if d[2] <= now:
+                    d[3] += 1
+                    rc += self._write(d[0])
+                    # Queue next poll interval
+                    d[2] = now + d[1]
+#                    if len(d[0]) > 6:
+#                        logging.debug('{:#x} sid={} @ {} [{}]'.format(unpack('!H', d[0][:2])[0], d[0][6], d[2], d[0]))
+                exp = min(exp, d[2])
+                to  = max(to, exp)
+            if rc > 0:
+                self._expire = exp
         if rc > 0:
             self._retries = 0
-            self._expire = exp
             self._timeout = to + 15.0
 #            logging.debug('sent: {} exp={} timeout={}'.format(rc, exp, to+15.0))
         return rc
