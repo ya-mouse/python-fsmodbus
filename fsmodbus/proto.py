@@ -91,8 +91,8 @@ class ModbusLayer():
                         self._res[self._tid].append((ptk-startreg, ptv))
                     ptstart += len(self._res[self._tid])
 #                    logging.debug('{},{}: {} ({},{})'.format(self._host, self._tid, self._res[self._tid], startreg, startreg+toread))
+                    self._tid = (self._tid + 1) & 0xffff
                     cnt -= p['read']
-                self._tid = (self._tid + 1) & 0xffff
 
     def send_buf(self):
         if not len(self._buf):
