@@ -158,12 +158,12 @@ class ModbusLayer():
 
                 if func == 1:
                     byteval = unpack('!%iB' % size, resp[9:9+size])
-                    bites = []
+                    bits = []
                     for byte in byteval:
                         for i in range(8):
-                            bites.append(1 if (byte & 0x01) else 0)
+                            bits.append(1 if (byte & 0x01) else 0)
                             byte >>= 1
-                    v = tuple(bites)
+                    v = tuple(bits)
                 elif func == 2:
                     v = unpack('!%iB' % size, resp[9:9+size])
                 elif func == 3 or func == 4:
