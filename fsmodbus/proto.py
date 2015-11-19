@@ -157,7 +157,13 @@ class ModbusLayer():
                     raise Exception('ERR CODE/FUNC {:#x}/{:#x} [{}] {} int={} {}'.format(code, func, resp, tid, self._buf[tid][2], len(self._buf)))
 
                 if func == 1:
-                    v = unpack('!%iB' % size, resp[9:9+size])
+                    byteval = unpack('!%iB' % size, resp[9:9+size])
+                    bites = []
+                    for byte in byteval:
+                        for i in range(8):
+                            bites.append(1 if (byte & 0x01) else 0)
+                            byte >>= 1
+                    v = tuple(bites)
                 elif func == 2:
                     v = unpack('!%iB' % size, resp[9:9+size])
                 elif func == 3 or func == 4:
