@@ -156,7 +156,7 @@ class ModbusLayer():
                     self._buf[tid][2] = tm + min(120.0, self._buf[tid][3]*3.0) # sleep for N*3 iterations
                     if code != 5:
                         # code = 5 : device already handle this request
-                        raise Exception('ERR CODE/FUNC {:#x}/{:#x} [{}] {} int={} {}'.format(code, func, resp, tid, self._buf[tid][2], len(self._buf)))
+                        raise Exception('ERR on slave {}: CODE/FUNC {:#x}/{:#x} [{}] {} int={} {}'.format(slave, code, func, resp, tid, self._buf[tid][2], len(self._buf)))
                 if func == 1:
                     v = unpack('!%iB' % size, resp[9:9+size])
                 elif func == 2:
