@@ -115,17 +115,19 @@ class ModbusLayer():
             else:
                 self._bufidx = last
         else:
+            r = None
             for tid, d in self._buf.items():
                 if d[2] <= now:
                     d[3] += 1
-                    rc += self._write(d[0])
+                    r = self._write(d[0])
+                    rc += r
                     # Queue next poll interval
                     d[2] = now + d[1]
 #                    if len(d[0]) > 6:
 #                        logging.debug('{:#x} sid={} @ {} [{}]'.format(unpack('!H', d[0][:2])[0], d[0][6], d[2], d[0]))
                 exp = min(exp, d[2])
                 to  = max(to, exp)
-            if rc > 0:
+            if rc > 0 or r is None: # Answer came or no one request send
                 self._expire = exp
         if rc > 0:
             self._retries = 0
