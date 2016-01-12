@@ -127,7 +127,7 @@ class ModbusLayer():
 #                        logging.debug('{:#x} sid={} @ {} [{}]'.format(unpack('!H', d[0][:2])[0], d[0][6], d[2], d[0]))
                 exp = min(exp, d[2])
                 to  = max(to, exp)
-            if rc > 0 or r == None: # Answer came or no one request send
+            if rc > 0 or r is None: # Answer came or no one request send
                 self._expire = exp
         if rc > 0:
             self._retries = 0
