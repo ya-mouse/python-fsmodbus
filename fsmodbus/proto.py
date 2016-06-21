@@ -6,8 +6,6 @@ import logging
 from time import time,sleep
 from struct import pack, unpack
 
-sys.path.append('/usr/lib/yandex/m3-monitor/lib/python3.4/site-packages')
-
 from fsmsock.proto import TcpTransport, UdpTransport, SerialTransport, RealcomClient
 
 crc_table = (
