@@ -6,7 +6,9 @@ import logging
 from time import time,sleep
 from struct import pack, unpack
 
-from fsmsock.proto import TcpTransport, SerialTransport, RealcomClient
+sys.path.append('/usr/lib/yandex/m3-monitor/lib/python3.4/site-packages')
+
+from fsmsock.proto import TcpTransport, UdpTransport, SerialTransport, RealcomClient
 
 crc_table = (
 0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
@@ -49,7 +51,7 @@ def crc16(st, crc=0xffff):
     return crc
 
 class ModbusLayer():
-    def __init__(self, slave, func, regs, interval, rps=None, oneshot=False):
+    def __init__(self, slave, func, regs, interval, rps=None, isrtu=False, oneshot=False):
         self._tid = 1
         self._interval = interval
         self._mininterval = interval
@@ -59,6 +61,10 @@ class ModbusLayer():
         self._oneshot = oneshot
         self._rps = rps
         self._bufidx = self._tid
+        self._isrtu = isrtu
+        if isrtu:
+            self._rps = 1
+        self._lastid = 1
 
     def _build_buf(self):
         self._res = {}
@@ -77,13 +83,18 @@ class ModbusLayer():
                     toread = min(cnt, p['read'])
                     startreg = p['total'] - cnt
                     self._buf[self._tid] = [
-                        pack('!3H2B2H', self._tid, 0x00, 0x6,
+                        pack('!2B2H',
+# self._tid, 0x00, 0x6,
                              slave, func, offset + startreg,
                              toread),
                         interval, # interval
                         0.0, # next query time
                         0,   # retries
                     ]
+                    if self._isrtu:
+                        self._buf[self._tid][0] += pack('<H', crc16(self._buf[self._tid][0]))
+                    else:
+                        self._buf[self._tid][0] = pack('!3H', self._tid, 0x00, 0x6) + self._buf[self._tid][0]
                     self._res[self._tid] = []
                     for ptk, ptv in points[ptstart:]:
                         if ptk >= startreg + toread:
@@ -92,6 +103,8 @@ class ModbusLayer():
                     ptstart += len(self._res[self._tid])
 #                    logging.debug('{},{}: {} ({},{})'.format(self._host, self._tid, self._res[self._tid], startreg, startreg+toread))
                     self._tid = (self._tid + 1) & 0xffff
+                    if self._tid == 0:
+                        self._tid = 1
                     cnt -= p['read']
 
     def send_buf(self):
@@ -110,6 +123,8 @@ class ModbusLayer():
                     self._exp_first = exp
                 self._expire = self._exp_first
                 rc += self._write(self._buf[tid][0])
+                if self._isrtu:
+                    self._lastid = tid
             if last == len(self._buf) + 1:
                 self._bufidx = 1
             else:
@@ -149,10 +164,20 @@ class ModbusLayer():
                 if len(resp) < 9:
                     raise Exception('Too short packet')
 
-                tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
-                size -= 3
-                if magic != 0:
-                    raise Exception('Wrong Modbus magic: {:#x}'.format(magic))
+                if self._isrtu:
+                    tid = self._lastid
+                    slave, func, size = unpack('!3B', resp[0:3])
+                    off = 3
+                    crc1 = crc16(resp[:off+size])
+                    crc2 = unpack('<H', resp[off+size:off+size+2])[0]
+                    if crc1 != crc2:
+                        raise Exception('Wrong CRC16: {:#x}, expected: {:#x}'.format(crc1, crc2))
+                else:
+                    tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:9])
+                    size -= 3
+                    off = 9
+                    if magic != 0:
+                        raise Exception('Wrong Modbus magic: {:#x}'.format(magic))
 
                 if (code & 0x80) == 0x80 or (func & 0x80) == 0x80:
                     self._buf[tid][2] = tm + min(120.0, self._buf[tid][3]*3.0) # sleep for N*3 iterations
@@ -160,7 +185,7 @@ class ModbusLayer():
                         # code = 5 : device already handle this request
                         raise Exception('ERR on slave {}: CODE/FUNC {:#x}/{:#x} [{}] {} int={} {}'.format(slave, code, func, resp, tid, self._buf[tid][2], len(self._buf)))
                 if func == 1:
-                    byteval = unpack('!%iB' % size, resp[9:9+size])
+                    byteval = unpack('!%iB' % size, resp[off:off+size])
                     bits = []
                     for byte in byteval:
                         for i in range(8):
@@ -168,16 +193,20 @@ class ModbusLayer():
                             byte >>= 1
                     v = tuple(bits)
                 elif func == 2:
-                    v = unpack('!%iB' % size, resp[9:9+size])
+                    v = unpack('!%iB' % size, resp[off:off+size])
                 elif func == 3 or func == 4:
-                    v = unpack('!%iH' % (size >> 1), resp[9:9+size])
+                    v = unpack('!%iH' % (size >> 1), resp[off:off+size])
                 else:
                     logging.debug('{}: UNK FUNC {:#x}'.format(self._host, func))
             except Exception as e:
-                logging.debug("E: {}({}) {} ({}: {}) [{}]".format(self._host, self.fileno(), len(resp[9:]), e, size, resp))
+                logging.debug("E: {}({}) {} ({}: {}) [{}]".format(self._host, self.fileno(), len(resp[off:]), e, size, resp))
                 # immediate stop of data processing
                 #break
-            resp = resp[9+size:]
+            if self._isrtu:
+                # Eat crc16
+                resp = resp[off+size+2:]
+            else:
+                resp = resp[off+size:]
 #            logging.debug('{}: --> [{}] tid={} tm={}({}) func={} code={:#x} sz={} v={}  {}'.format(self._host, resp, tid, self._buf[tid][2], tm, func, code, size, v, len(self._buf)))
             if not v is None:
                 try:
@@ -212,7 +241,7 @@ class ModbusLayer():
         super().on_disconnect()
 
     def on_data(self, points, response, tm):
-        print(points, response)
+        print(tm, points, response)
 
 class ModbusTcpClient(ModbusLayer, TcpTransport):
     def __init__(self, host, interval, slave, func, regs, port=502, rps=None):
@@ -225,15 +254,26 @@ class ModbusTcpClient(ModbusLayer, TcpTransport):
 
 class ModbusRtuClient(ModbusLayer, SerialTransport):
     def __init__(self, host, interval, slave, func, serial, regs, rps=None):
-        ModbusLayer.__init__(self, True, slave, func, regs, interval, rps=rps)
+        ModbusLayer.__init__(self, slave, func, regs, interval, rps=rps, isrtu=True)
         SerialTransport.__init__(self, host, interval, serial)
+
+    def on_data(self, bufidx, response, tm):
+        super().on_data(bufidx, response, tm)
+
+class ModbusRtuUdpClient(ModbusLayer, UdpTransport):
+    def __init__(self, host, interval, slave, func, regs, port=502, rps=None):
+        ModbusLayer.__init__(self, slave, func, regs, interval, rps=rps, isrtu=True)
+        UdpTransport.__init__(self, host, interval, port)
+
+    def on_unorder(self, data):
+        self.process_data(data)
 
     def on_data(self, bufidx, response, tm):
         super().on_data(bufidx, response, tm)
 
 class ModbusRealcomClient(ModbusLayer, RealcomClient):
     def __init__(self, host, interval, slave, func, serial, realcom_port, regs, rps=None):
-        ModbusLayer.__init__(self, True, slave, func, regs, interval, rps=rps)
+        ModbusLayer.__init__(self, slave, func, regs, interval, rps=rps, isrtu=True)
         RealcomClient.__init__(self, host, interval, realcom_port, serial)
 
     def send_buf(self):
@@ -255,26 +295,27 @@ if __name__ == '__main__':
     TYPE_UINT32     = 3
     TYPE_FLOAT32    = 5
 
-    cfg = { 'host': '192.168.56.13',
+    cfg = { 'host': '172.19.37.60',
         'interval': 3.0,
+        'port': 10001,
         'slave': 1,                        # slave_id
         'func': 4,                        # функция чтения
         'regs' : [ {
-      'read': 36,                       # число регистров, читаемых за раз
+      'read': 32,                       # число регистров, читаемых за раз
       'total': 86,                       # общее число регистров
       'points': {
-'L1.V' : [ 0, TYPE_UINT32, 10.0 ],
-'L1.I' : [ 2, TYPE_UINT32, 1000.0, ],
-'L1.W' : [ 4, TYPE_UINT32, 1.0 ],
-'L2.V' : [ 10, TYPE_UINT32, 10.0 ],
-'L2.I' : [ 12, TYPE_UINT32, 1000.0, ],
-'L2.W' : [ 14, TYPE_UINT32, 1.0 ],
-'L3.V' : [ 20, TYPE_UINT32, 10.0 ],
-'L3.I' : [ 22, TYPE_UINT32, 1000.0, ],
-'L3.W' : [ 24, TYPE_UINT32, 1.0 ],
-'IN' : [ 72, TYPE_UINT32, 10.0 ],
-'APW' : [ 60, TYPE_UINT32, 1000.0, ],
-'kVA' : [ 66, TYPE_UINT32, 1.0 ],
+0 : [ TYPE_UINT32, 10.0, None, 'L1.V' ],
+2 : [ TYPE_UINT32, 1000.0, None, 'L1.I' ],
+4 : [ TYPE_UINT32, 1.0, None, 'L1.W' ],
+10 : [ TYPE_UINT32, 10.0, None, 'L2.V' ],
+12 : [ TYPE_UINT32, 1000.0, None, 'L2.I' ],
+14 : [ TYPE_UINT32, 1.0, None, 'L2.W' ],
+20 : [ TYPE_UINT32, 10.0, None, 'L3.V' ],
+22 : [ TYPE_UINT32, 1000.0, None, 'L3.I' ],
+24 : [ TYPE_UINT32, 1.0, None, 'L3.W' ],
+72 : [ TYPE_UINT32, 10.0, None, 'IN' ],
+60 : [ TYPE_UINT32, 1000.0, None, 'APW' ],
+66 : [ TYPE_UINT32, 1.0, None, 'kVA' ],
       } } ]
     }
 
@@ -314,7 +355,7 @@ if __name__ == '__main__':
 'L1.V' : [ 0, TYPE_UINT32, 1.0 ],
       } } ]
     }
-    c = ModbusTcpClient(**cfg)
+    c = ModbusRtuUdpClient(**cfg)
 #    c = ModbusRealcomClient(**cfg1)
     fsm = async.FSMSock()
     fsm.connect(c)
