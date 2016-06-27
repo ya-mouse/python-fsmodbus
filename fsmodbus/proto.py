@@ -157,7 +157,7 @@ class ModbusLayer():
 #        logging.debug('{}: data=[{}]'.format(self._host, data))
         while len(resp):
             v = None
-            tid = size = func = code = 0
+            tid = size = func = code = off = 0
             try:
                 if len(resp) < 9:
                     raise Exception('Too short packet')
