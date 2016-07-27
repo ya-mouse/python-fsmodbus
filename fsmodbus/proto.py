@@ -155,10 +155,7 @@ class ModbusLayer():
         if tm is None:
             tm = time()
 #        logging.debug('{}: data=[{}]'.format(self._host, data))
-        if self._isrtu:
-            off = 3
-        else
-            off = 9
+        off = 3 if self._isrtu else 9
         while len(resp):
             v = None
             tid = size = func = code = 0
