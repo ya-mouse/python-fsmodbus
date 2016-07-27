@@ -155,7 +155,10 @@ class ModbusLayer():
         if tm is None:
             tm = time()
 #        logging.debug('{}: data=[{}]'.format(self._host, data))
-        off = 0
+        if self._isrtu:
+            off = 3
+        else
+            off = 9
         while len(resp):
             v = None
             tid = size = func = code = 0
@@ -164,7 +167,6 @@ class ModbusLayer():
                     raise Exception('Too short packet')
 
                 if self._isrtu:
-                    off = 3
                     tid = self._lastid
                     slave, func, size = unpack('!3B', resp[0:off])
                     crc1 = crc16(resp[:off+size])
@@ -172,7 +174,6 @@ class ModbusLayer():
                     if crc1 != crc2:
                         raise Exception('Wrong CRC16: {:#x}, expected: {:#x}'.format(crc1, crc2))
                 else:
-                    off = 9
                     tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:off])
                     size -= 3
                     if magic != 0:
