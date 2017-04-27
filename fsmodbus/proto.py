@@ -181,7 +181,7 @@ class ModbusLayer():
                     if code != 5:
                         # code = 5 : device already handle this request
                         raise Exception('ERR on slave {}: CODE/FUNC {:#x}/{:#x} [{}] {} int={} {}'.format(slave, code, func, resp, tid, self._buf[tid][2], len(self._buf)))
-                if func == 1:
+                if func == 1 or func == 2:
                     byteval = unpack('!%iB' % size, resp[off:off+size])
                     bits = []
                     for byte in byteval:
@@ -189,8 +189,6 @@ class ModbusLayer():
                             bits.append(1 if (byte & 0x01) else 0)
                             byte >>= 1
                     v = tuple(bits)
-                elif func == 2:
-                    v = unpack('!%iB' % size, resp[off:off+size])
                 elif func == 3 or func == 4:
                     v = unpack('!%iH' % (size >> 1), resp[off:off+size])
                 else:
