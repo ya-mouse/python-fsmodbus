@@ -171,12 +171,13 @@ class ModbusLayer():
                     if crc1 != crc2:
                         raise Exception('Wrong CRC16: {:#x}, expected: {:#x}'.format(crc1, crc2))
                 else:
-                    tid, magic, size, slave, func, code = unpack('!3H3B', resp[0:off])
+                    tid, magic, size, slave, func, *_ = unpack('!3H3B', resp[0:off])
+                    code = func & 0x80
                     size -= 3
                     if magic != 0:
                         raise Exception('Wrong Modbus magic: {:#x}'.format(magic))
 
-                if (code & 0x80) == 0x80 or (func & 0x80) == 0x80:
+                if code == 0x80:
                     self._buf[tid][2] = tm + min(120.0, self._buf[tid][3]*3.0) # sleep for N*3 iterations
                     if code != 5:
                         # code = 5 : device already handle this request
