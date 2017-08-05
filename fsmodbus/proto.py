@@ -66,10 +66,11 @@ class ModbusLayer():
 
     def _build_buf(self):
         self._res = {}
-        if self._func in (1,2,3,4):
+        if self._func in (1,2,3,4,5,6,15,16):
             self._buf = {}
             for p in self._regs:
-                cnt = p['total']
+                cnt = total = p.get('total', len(p['points']))
+                quantum = p.get('read', 1)
                 func = p.get('func', self._func)
                 slave = p.get('slave', self._slave)
                 offset = p.get('offset', 0)
@@ -77,25 +78,33 @@ class ModbusLayer():
                 interval = p.get('interval', self._interval)
                 self._mininterval = min(self._mininterval, interval)
                 points = [(k, v) for (k, v) in sorted(p['points'].items())]
+                is_write = func in (5,6,15,16)
                 while cnt > 0:
-                    toread = min(cnt, p['read'])
-                    startreg = p['total'] - cnt
+                    remaining = min(cnt, quantum)
+                    startreg = total - cnt
                     self._buf[self._tid] = [
-                        pack('!2B2H',
-# self._tid, 0x00, 0x6,
-                             slave, func, offset + startreg,
-                             toread),
+                        pack('!2BH',
+                             slave, func, offset + startreg),
                         interval, # interval
                         0.0, # next query time
                         0,   # retries
                     ]
+                    if is_write:
+                        if func != 16:
+                            self._buf[self._tid][0] += pack('!H', points[ptstart][1])
+                        else:
+                            self._buf[self._tid][0] += pack('!HB%dB', remaining/2, remaining, remaining, points[ptstart:ptstart+remaining])
+                    else:
+                        self._buf[self._tid][0] += pack('!H', remaining)
+
                     if self._isrtu:
                         self._buf[self._tid][0] += pack('<H', crc16(self._buf[self._tid][0]))
                     else:
                         self._buf[self._tid][0] = pack('!3H', self._tid, 0x00, 0x6) + self._buf[self._tid][0]
+
                     self._res[self._tid] = []
                     for ptk, ptv in points[ptstart:]:
-                        if ptk >= startreg + toread:
+                        if ptk >= startreg + remaining:
                             break
                         self._res[self._tid].append((ptk-startreg, ptv))
                     ptstart += len(self._res[self._tid])
@@ -103,7 +112,7 @@ class ModbusLayer():
                     self._tid = (self._tid + 1) & 0xffff
                     if self._tid == 0:
                         self._tid = 1
-                    cnt -= p['read']
+                    cnt -= quantum
 
     def send_buf(self):
         if not len(self._buf):
@@ -192,6 +201,9 @@ class ModbusLayer():
                     v = tuple(bits)
                 elif func == 3 or func == 4:
                     v = unpack('!%iH' % (size >> 1), resp[off:off+size])
+                elif func in (5,6,15):
+                    size += 1
+                    v = unpack('!H', resp[off+1:off+size])
                 else:
                     logging.debug('{}: UNK FUNC {:#x}'.format(self._host, func))
             except Exception as e:
@@ -351,7 +363,41 @@ if __name__ == '__main__':
 'L1.V' : [ 0, TYPE_UINT32, 1.0 ],
       } } ]
     }
-    c = ModbusRtuUdpClient(**cfg)
+
+    cfg_tcp = { 'host': '172.19.40.239',
+        'interval': 1.0,
+        'slave': 1,
+        'rps': 1,
+        'func': 5,
+        'regs' : [
+            {
+                'func': 1,
+                'read': 4,
+                'points': {
+                    4: [ 'READ' ]
+                }
+            }, {
+                'func': 5,
+                'points': {
+                    4: 1,
+                }
+            }, {
+                'func': 3,
+                'read': 4,
+                'points': {
+                    0: [ 'READ' ],
+                }
+            }, {
+                'func': 5,
+                'points': {
+                    4: 0,
+                }
+            }
+        ]
+    }
+
+#    c = ModbusRtuUdpClient(**cfg)
+    c = ModbusTcpClient(**cfg_tcp)
 #    c = ModbusRealcomClient(**cfg1)
     fsm = async.FSMSock()
     fsm.connect(c)
