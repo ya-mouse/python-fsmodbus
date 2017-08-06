@@ -90,7 +90,9 @@ class ModbusLayer():
                         0,   # retries
                     ]
                     if is_write:
-                        if func != 16:
+                        if func == 5:
+                            self._buf[self._tid][0] += pack('!H', 0xff00 if points[ptstart][1] else 0)
+                        elif func == 6:
                             self._buf[self._tid][0] += pack('!H', points[ptstart][1])
                         else:
                             self._buf[self._tid][0] += pack('!HB%dB', remaining/2, remaining, remaining, points[ptstart:ptstart+remaining])
@@ -371,26 +373,41 @@ if __name__ == '__main__':
         'func': 5,
         'regs' : [
             {
-                'func': 1,
-                'read': 4,
+                'func': 5,
+                'offset': 0x1f,
                 'points': {
-                    4: [ 'READ' ]
+                    0: 0,   # pulse operation off
+                }
+            }, {
+                'func': 6,
+                'offset': 0x27,
+                'points': {
+                    0: 1,   # DO mode (0 = DO, 1 = Pulse)
+                }
+            }, {
+                'func': 6,
+                'offset': 0xe,
+                'points': {
+                    0: 0,    # pulse count hi
+                    1: 1,    # pulse count low
+                }
+            }, {
+                'func': 6,
+                'offset': 0x17,
+                'points': {
+                    0: 1000, # low signal width, 1 pt = 0.5 ms
+                }
+            }, {
+                'func': 6,
+                'offset': 0x1f,
+                'points': {
+                    0: 1000, # high signal width, 1 pt = 0.5 ms
                 }
             }, {
                 'func': 5,
+                'offset': 0x1f,
                 'points': {
-                    4: 1,
-                }
-            }, {
-                'func': 3,
-                'read': 4,
-                'points': {
-                    0: [ 'READ' ],
-                }
-            }, {
-                'func': 5,
-                'points': {
-                    4: 0,
+                    0: 1,   # pulse operation on
                 }
             }
         ]
