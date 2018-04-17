@@ -130,7 +130,7 @@ class ModbusLayer():
             for tid in range(self._bufidx, last):
                 if self._bufidx == 1:
                     self._exp_first = exp
-                self._expire = self._exp_first
+                self._expire = max(self._exp_first, exp)
                 rc += self._write(self._buf[tid][0])
                 if self._isrtu:
                     self._lastid = tid
